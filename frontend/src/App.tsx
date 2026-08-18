@@ -8,7 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { getSettings, getSettingsWithDefaults, loadSettings, saveSettings, applyThemeMode, applyFont } from "@/lib/settings";
 import { applyTheme } from "@/lib/themes";
 import { openExternal } from "@/lib/utils";
-import { OpenFolder, CheckFFmpegInstalled, DownloadFFmpeg, GetRecentFetches, SaveRecentFetches } from "../wailsjs/go/main/App";
+import { OpenFolder, CheckFFmpegInstalled, DownloadFFmpeg, GetRecentFetches, SaveRecentFetches, DeleteDownloadHistoryItem } from "../wailsjs/go/main/App";
 import { EventsOn, EventsOff, Quit } from "../wailsjs/runtime/runtime";
 import { toastWithSound as toast } from "@/lib/toast-with-sound";
 import { TitleBar } from "@/components/TitleBar";
@@ -50,8 +50,10 @@ import { ensureApiStatusCheckStarted } from "@/lib/api-status";
 import { useDownloadProgress } from "@/hooks/useDownloadProgress";
 import { buildPlaylistFolderName } from "@/lib/playlist";
 import { isNewerVersion } from "@/lib/version";
+import { GetDownloadHistory } from "../wailsjs/go/main/App";
+
 const HISTORY_KEY = "spotiflac_fetch_history";
-const MAX_HISTORY = 5;
+const MAX_HISTORY = 20;
 const TOOL_NAVIGATION_PAGES = new Set<PageType>(["tools", "audio-analysis", "tempo-key-analyzer", "replaygain", "audio-converter", "audio-resampler", "file-manager", "lyrics-manager", "enrich"]);
 function extractSpotifyEntityFromURL(url: string): {
     type: string;
@@ -185,6 +187,26 @@ function App() {
     const [isInstallingFFmpeg, setIsInstallingFFmpeg] = useState(false);
     const [ffmpegInstallProgress, setFfmpegInstallProgress] = useState(0);
     const [ffmpegInstallStatus, setFfmpegInstallStatus] = useState("");
+    const [downloadIdToSpotifyIds, setDonwloadIdsToSpotifyId] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        const fetchHistory = async () => {
+            try {
+                const history = await GetDownloadHistory();
+                const downloadedIds = new Set(history.map(item => item.spotify_id));
+                const idMapping = history.reduce((prev, next) => {
+                    prev[next.spotify_id] = next.id;
+                    return prev;
+                }, {} as Record<string, string>)
+                download.setStateDownloadedTracks(downloadedIds);
+                setDonwloadIdsToSpotifyId(idMapping)
+            } catch (error) {
+                console.error("Failed to load download history:", error);
+            }
+        };
+
+        fetchHistory();
+    }, [download.setStateDownloadedTracks]);
     useLayoutEffect(() => {
         const savedSettings = getSettings();
         if (savedSettings) {
@@ -257,7 +279,6 @@ function App() {
     useEffect(() => {
         setSelectedTracks([]);
         setSearchQuery("");
-        download.resetDownloadedTracks();
         lyrics.resetLyricsState();
         cover.resetCoverState();
         availability.clearAvailability();
@@ -450,6 +471,15 @@ function App() {
     const toggleTrackSelection = (id: string) => {
         setSelectedTracks((prev) => prev.includes(id) ? prev.filter((prevId) => prevId !== id) : [...prev, id]);
     };
+    const handleDeleteDownloadItem = async (id: string) => {
+        const historyId = downloadIdToSpotifyIds[id];
+        await DeleteDownloadHistoryItem(historyId);
+        download.setStateDeleteDownloadedTracks([id])
+        setDonwloadIdsToSpotifyId(prev => {
+            const { [id]: _, ...rest } = prev;
+            return rest;
+        });
+    };
     const toggleSelectAll = (tracks: any[]) => {
         const tracksWithId = tracks.filter((track) => track.spotify_id).map((track) => track.spotify_id || "");
         if (tracksWithId.length === 0)
@@ -594,7 +624,7 @@ function App() {
                         setSpotifyUrl(track.external_urls);
                         await metadata.handleFetchMetadata(track.external_urls);
                     }
-                }}/>);
+                }} onDelete={handleDeleteDownloadItem}/>);
         }
         if ("playlist_info" in metadata.metadata) {
             const { playlist_info, track_list } = metadata.metadata;
@@ -612,7 +642,7 @@ function App() {
                         setSpotifyUrl(track.external_urls);
                         await metadata.handleFetchMetadata(track.external_urls);
                     }
-                }}/>);
+                }} onDelete={handleDeleteDownloadItem}/>);
         }
         if ("artist_info" in metadata.metadata) {
             const { artist_info, album_list, track_list } = metadata.metadata;
@@ -628,7 +658,7 @@ function App() {
                         setSpotifyUrl(track.external_urls);
                         await metadata.handleFetchMetadata(track.external_urls);
                     }
-                }}/>);
+                }} onDelete={handleDeleteDownloadItem}/>);
         }
         return null;
     };
@@ -901,8 +931,8 @@ function App() {
                                     <div className="h-1.5 w-full bg-secondary/30 rounded-full overflow-hidden">
                                         <div className="h-full bg-primary transition-all duration-300 shadow-[0_0_10px_rgba(var(--primary),0.3)]" style={{ width: `${ffmpegInstallProgress}%` }}/>
                                     </div>
-                                </div>)}
                         </div>)}
+                    </div>)}
 
                     <DialogFooter className="flex-row gap-3 pt-2">
                         {!isInstallingFFmpeg && (<Button variant="outline" className="flex-1 h-11 text-sm font-bold transition-colors" onClick={() => Quit()}>

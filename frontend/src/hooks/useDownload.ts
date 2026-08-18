@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { t, translateMessage } from "@/i18n";
 import { downloadTrack, fetchSpotifyMetadata } from "@/lib/api";
 import { getSettings, parseTemplate, sanitizeAutoOrder, getEffectiveAlbumFilenameTemplate, templateUsesAlbumTrackNumber, getAlbumCategoryLabel, type TemplateData } from "@/lib/settings";
@@ -8,6 +8,9 @@ import { logger } from "@/lib/logger";
 import { writeAutomaticReplayGainTags } from "@/lib/replaygain";
 import type { TrackMetadata } from "@/types/api";
 import { beginDirectCollectionQueueItem, beginDirectTrackQueueItem, finishDirectQueueItem, getQueueTrackStatusSets, updateQueueTrackResult, type QueueExecutionResult, type QueueItemType, type QueueResumeContext, type QueueTrackStatus } from "@/lib/queue";
+import { craetePlaylist } from "@/exec";
+import { GetDownloadHistory } from "../../wailsjs/go/main/App";
+
 type BatchDownloadSource = "playlist" | "album" | "discography" | "collection";
 function getCompleteAlbumPaths(tracks: TrackMetadata[], filePaths: Map<string, string>, completedTrackIDs: Set<string>): string[] | null {
     if (tracks.length < 2)
@@ -1313,7 +1316,9 @@ export function useDownload() {
     };
     const handleDownloadAll = async (tracks: TrackMetadata[], folderName?: string, isAlbum?: boolean, batchSource: BatchDownloadSource = "collection", queueItemId?: string, resumeContext?: QueueResumeContext) => {
         const settings = getSettings();
-        const candidateTracksWithID = tracks.filter((track) => track.spotify_id);
+        const candidateTracksWithID = tracks.filter((track) => track.spotify_id && !downloadedTracks.has(track.spotify_id));
+        const history = await GetDownloadHistory();
+        craetePlaylist(tracks, history);
         if (candidateTracksWithID.length === 0) {
             toast.error(t("translation.download.noTracksAvailableDownload"));
             return;
@@ -1653,12 +1658,37 @@ export function useDownload() {
         setFailedTracks(new Set(restoredQueueTrackStatuses.failedTracks));
         setSkippedTracks(new Set(restoredQueueTrackStatuses.skippedTracks));
     };
+    const setStateDownloadedTracks = useCallback((tracks: Set<string>) => {
+        setDownloadedTracks(prev => {
+            const nextSet = new Set(prev);
+            tracks.forEach(track => nextSet.add(track));
+            return nextSet;
+        });
+    }, []);
+    const setStateDeleteDownloadedTracks = useCallback((tracks: string[]) => {
+        if (tracks.length === 0) return;
+
+        setDownloadedTracks(prev => {
+            let wasModified = false;
+            const nextSet = new Set(prev);
+
+            tracks.forEach(track => {
+                if (nextSet.delete(track)) {
+                    wasModified = true;
+                }
+            });
+
+            return wasModified ? nextSet : prev;
+        });
+    }, []);
     return {
         isDownloading,
         downloadingTrack,
         downloadedTracks,
         failedTracks,
         skippedTracks,
+        setStateDownloadedTracks,
+        setStateDeleteDownloadedTracks,
         handleDownloadTrack,
         handleDownloadSelected,
         handleDownloadAll,

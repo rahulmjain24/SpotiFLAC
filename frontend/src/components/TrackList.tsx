@@ -1,7 +1,7 @@
 import { t } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CircleCheckBig, XCircle, FileCheck, FileText, Globe, ImageDown, Play, Pause, ListPlus, CircleCheck } from "lucide-react";
+import { CircleCheckBig, XCircle, FileCheck, FileText, Globe, ImageDown, Play, Pause, ListPlus, CircleCheck, Trash2 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger, } from "@/components/ui/tooltip";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, } from "@/components/ui/pagination";
@@ -54,8 +54,9 @@ interface TrackListProps {
         external_urls: string;
     }) => void;
     onTrackClick?: (track: TrackMetadata) => void;
+    onDelete: (id: string) => void;
 }
-export function TrackList({ tracks, searchQuery, sortBy, selectedTracks, downloadedTracks, failedTracks, skippedTracks, currentPage, itemsPerPage, showCheckboxes = false, hideAlbumColumn = false, folderName, isArtistDiscography = false, downloadedLyrics, failedLyrics, skippedLyrics, downloadingLyricsTrack, checkingAvailabilityTrack, availabilityMap, downloadedCovers, failedCovers, skippedCovers, downloadingCoverTrack, onToggleTrack, onToggleSelectAll, onSelectTrackRange, onQueueTrack, onDownloadLyrics, onCheckAvailability, onDownloadCover, onPageChange, onAlbumClick, onArtistClick, onTrackClick, }: TrackListProps) {
+export function TrackList({ tracks, searchQuery, sortBy, selectedTracks, downloadedTracks, failedTracks, skippedTracks, currentPage, itemsPerPage, showCheckboxes = false, hideAlbumColumn = false, folderName, isArtistDiscography = false, downloadedLyrics, failedLyrics, skippedLyrics, downloadingLyricsTrack, checkingAvailabilityTrack, availabilityMap, downloadedCovers, failedCovers, skippedCovers, downloadingCoverTrack, onToggleTrack, onToggleSelectAll, onSelectTrackRange, onQueueTrack, onDownloadLyrics, onCheckAvailability, onDownloadCover, onPageChange, onAlbumClick, onArtistClick, onTrackClick, onDelete, }: TrackListProps) {
     const { playPreview, loadingPreview, playingTrack } = usePreview();
     const { isQueued } = useQueueFeedback();
     const [lastTrackIndex, setLastTrackIndex] = useState<number | null>(null);
@@ -334,8 +335,18 @@ export function TrackList({ tracks, searchQuery, sortBy, selectedTracks, downloa
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>{playingTrack === track.spotify_id ? t("translation.migrated.TrackList.stopPreview") : t("translation.migrated.TrackList.playPreview")}</p>
-                    </TooltipContent>
-                  </Tooltip>)}
+                      </TooltipContent>
+                    </Tooltip>)}
+                  {track.spotify_id && (<Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button onClick={() => onDelete(track.spotify_id!)} size="icon" disabled={!downloadedTracks.has(track.spotify_id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Delete</p>
+                      </TooltipContent>
+                    </Tooltip>)}
                   {track.spotify_id && onDownloadLyrics && (<Tooltip>
                     <TooltipTrigger asChild>
                       <Button onClick={() => onDownloadLyrics(track.spotify_id!, track.name, track.artists, track.album_name, folderName, isArtistDiscography, startIndex + index + 1, track.album_artist, track.release_date, track.disc_number)} size="icon" variant="outline" disabled={downloadingLyricsTrack === track.spotify_id}>
