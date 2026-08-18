@@ -3,8 +3,10 @@ package backend
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -292,6 +294,67 @@ func ClearFetchHistoryByType(itemType string, appName string) error {
 	})
 }
 
+func UpdateHistoryPathsToOne(oldLocations []string, newLocation string, appName string) (int, error) {
+	if historyDB == nil {
+		if err := InitHistoryDB(appName); err != nil {
+			return 0, err
+		}
+	}
+
+	var updatedCount int
+
+	// Normalize the new destination path (e.g. "/media/Media/Music/Singles")
+	newLocation = filepath.Clean(newLocation)
+
+	err := historyDB.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(historyBucket))
+		if b == nil {
+			return nil
+		}
+
+		return b.ForEach(func(k, v []byte) error {
+			var item HistoryItem
+			if err := json.Unmarshal(v, &item); err != nil {
+				return nil // Skip unparseable records
+			}
+
+			// 1. Check if the current path starts with any of the old locations
+			needsUpdate := false
+			for _, oldLoc := range oldLocations {
+				if strings.HasPrefix(item.Path, filepath.Clean(oldLoc)) {
+					needsUpdate = true
+					break
+				}
+			}
+
+			if needsUpdate {
+				// 2. Extract just the file name (e.g., "song.flac")
+				fileName := filepath.Base(item.Path)
+
+				// 3. Create the flattened path
+				newPath := filepath.Join(newLocation, fileName)
+
+				if newPath != item.Path {
+					item.Path = newPath
+
+					buf, err := json.Marshal(item)
+					if err != nil {
+						return err // Fails the transaction if JSON marshaling breaks
+					}
+
+					if err := b.Put(k, buf); err != nil {
+						return err
+					}
+					updatedCount++
+				}
+			}
+			return nil
+		})
+	})
+
+	return updatedCount, err
+}
+
 func DeleteHistoryItem(id string, appName string) error {
 	if historyDB == nil {
 		if err := InitHistoryDB(appName); err != nil {
@@ -302,6 +365,22 @@ func DeleteHistoryItem(id string, appName string) error {
 		b := tx.Bucket([]byte(historyBucket))
 		if b == nil {
 			return nil
+		}
+
+		recordBytes := b.Get([]byte(id))
+		if recordBytes == nil {
+			return nil
+		}
+
+		var item HistoryItem
+		if err := json.Unmarshal(recordBytes, &item); err != nil {
+			return fmt.Errorf("failed to parse history item: %w", err)
+		}
+
+		if err := os.Remove(item.Path); err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("failed to delete file %s: %w", item.Path, err)
+			}
 		}
 
 		return b.Delete([]byte(id))

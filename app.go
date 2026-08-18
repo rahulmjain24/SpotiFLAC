@@ -1843,6 +1843,7 @@ func (a *App) Quit() {
 }
 
 func (a *App) GetDownloadHistory() ([]backend.HistoryItem, error) {
+	// backend.UpdateHistoryPathsToOne([]string{"//media/Media/Music/Singles"}, "/media/Media/Music/Singles", "SpotiFLAC")
 	return backend.GetHistoryItems("SpotiFLAC")
 }
 
