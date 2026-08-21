@@ -125,8 +125,6 @@ const communityRateLimitMaxRetries = 6
 
 const communityRateLimitFallbackWait = 30 * time.Second
 
-const communityCooldownNormalNotice = "This is normal and not a bug. "
-
 const communityCooldownFallbackMessage = "The server is taking a scheduled short break. Please try again in about %d minute(s)."
 
 type communityCooldownError struct {
@@ -188,42 +186,6 @@ func communityRetryAfter(resp *http.Response) time.Duration {
 	return communityRateLimitFallbackWait
 }
 
-func newCommunityCooldownError(service string, resp *http.Response) *communityCooldownError {
-	seconds := 0
-	message := ""
-	if resp != nil {
-		if ra := strings.TrimSpace(resp.Header.Get("Retry-After")); ra != "" {
-			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
-				seconds = secs
-			}
-		}
-		if body, err := io.ReadAll(io.LimitReader(resp.Body, 4096)); err == nil {
-			var parsed struct {
-				Error string `json:"error"`
-			}
-			if json.Unmarshal(body, &parsed) == nil {
-				message = strings.TrimSpace(parsed.Error)
-			}
-		}
-		resp.Body.Close()
-	}
-
-	if seconds <= 0 {
-		seconds = int(communityRateLimitFallbackWait / time.Second)
-	}
-	if message == "" {
-		message = fmt.Sprintf(communityCooldownFallbackMessage, max(1, (seconds+59)/60))
-	}
-	if !strings.HasPrefix(message, communityCooldownNormalNotice) {
-		message = communityCooldownNormalNotice + message
-	}
-
-	SetCommunityCooldown(float64(seconds), message)
-	fmt.Printf("%s community API on scheduled cooldown (503), back in ~%ds\n", service, seconds)
-
-	return &communityCooldownError{service: service, seconds: seconds, message: message}
-}
-
 func doCommunityRequest(client *http.Client, service string, reqFn func() (*http.Request, error)) (*http.Response, error) {
 	var lastErr error
 	verificationRetried := false
@@ -240,8 +202,36 @@ func doCommunityRequest(client *http.Client, service string, reqFn func() (*http
 
 		if resp.StatusCode == http.StatusServiceUnavailable {
 			ClearRateLimitCooldown()
-			return nil, newCommunityCooldownError(service, resp)
+
+			wait := communityRetryAfter(resp)
+			seconds := int(wait.Seconds())
+
+			message := ""
+			if body, err := io.ReadAll(io.LimitReader(resp.Body, 4096)); err == nil {
+				var parsed struct {
+					Error string `json:"error"`
+				}
+				if json.Unmarshal(body, &parsed) == nil {
+					message = strings.TrimSpace(parsed.Error)
+				}
+			}
+			resp.Body.Close()
+
+			if message == "" {
+				message = fmt.Sprintf(communityCooldownFallbackMessage, max(1, (seconds+59)/60))
+			}
+
+			SetCommunityCooldown(float64(seconds), message)
+			fmt.Printf("%s community API on scheduled cooldown (503), pausing for ~%ds\n", service, seconds)
+
+			if sleepErr := SleepWithDownloadContext(wait); sleepErr != nil {
+				ClearCommunityCooldown()
+				return nil, sleepErr
+			}
+			ClearCommunityCooldown()
+			continue
 		}
+
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusPreconditionRequired) && !verificationRetried {
 			resp.Body.Close()
 			clearCommunitySessionCredentials()
